@@ -31,15 +31,20 @@ export default function ProductCard({ product }) {
 
         {/* Footer */}
         <div className="flex items-center justify-between pt-3 border-t border-white/5">
-          <div className="flex items-center gap-2">
-            <div className="w-6 h-6 rounded-full bg-gradient-to-br from-brand-400 to-violet-400 flex items-center justify-center text-xs font-bold text-white">
+          <div className="flex items-center gap-2 min-w-0">
+            <div className="w-7 h-7 rounded-full bg-gradient-to-br from-brand-400 to-violet-400 flex items-center justify-center text-xs font-bold text-white shrink-0">
               {product.createdBy?.name?.[0]?.toUpperCase() || '?'}
             </div>
-            <span className="text-xs text-slate-500 truncate max-w-[100px]">
-              {product.createdBy?.name || 'Unknown'}
-            </span>
+            <div className="flex flex-col min-w-0">
+              <span className="text-xs font-medium text-slate-300 truncate">
+                {product.createdBy?.name || 'Unknown'}
+              </span>
+              <span className="text-[10px] text-slate-500 truncate" title={product.createdBy?.email}>
+                {product.createdBy?.email || ''}
+              </span>
+            </div>
           </div>
-          <span className="text-xs text-slate-600">
+          <span className="text-xs text-slate-600 shrink-0">
             {new Date(product.createdAt).toLocaleDateString('en-US', {
               month: 'short',
               day: 'numeric',
