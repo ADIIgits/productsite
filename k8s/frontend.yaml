@@ -1,3 +1,4 @@
+# ── Frontend Deployment ───────────────────────────────────────────────────────
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -9,6 +10,11 @@ spec:
   selector:
     matchLabels:
       app: pc-frontend
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
   template:
     metadata:
       labels:
@@ -18,12 +24,33 @@ spec:
       - name: ecr-registry-secret
       containers:
       - name: frontend
-        # Note: Replace <AWS_ACCOUNT_ID> and <REGION> with your actual ECR repository details.
         image: 262046948996.dkr.ecr.us-east-1.amazonaws.com/pc-frontend:latest
         imagePullPolicy: Always
         ports:
         - containerPort: 80
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "100m"
+          limits:
+            memory: "128Mi"
+            cpu: "200m"
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 10
+          periodSeconds: 15
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 5
+          periodSeconds: 10
+          failureThreshold: 3
 ---
+# ── Frontend Service (ClusterIP — traffic routed via Ingress) ─────────────────
 apiVersion: v1
 kind: Service
 metadata:
@@ -31,7 +58,7 @@ metadata:
   labels:
     app: pc-frontend
 spec:
-  type: LoadBalancer
+  type: ClusterIP
   ports:
   - port: 80
     targetPort: 80

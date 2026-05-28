@@ -1,131 +1,176 @@
 # AWS EKS Deployment Guide
 
-This guide will walk you through containerizing your application and deploying it to a Kubernetes cluster running on AWS Elastic Kubernetes Service (EKS).
+End-to-end guide for deploying the Product Catalog application to AWS EKS with full CI/CD via Jenkins.
+
+## Architecture Overview
+
+```
+GitHub Push
+    │
+    ▼
+Jenkins (k8s/jenkins.yaml — jenkins namespace)
+    │  • Builds Docker images (commit-hash tagged)
+    │  • Pushes to Amazon ECR
+    │  • Runs kubectl apply
+    ▼
+Amazon EKS Cluster (t3.large × 2 nodes = 16 GB RAM total)
+    ├── default namespace
+    │   ├── pc-frontend  (Nginx, 2 replicas)
+    │   ├── pc-backend   (Node.js, 2 replicas) ← Prometheus scrapes /metrics
+    │   └── pc-mongo     (MongoDB StatefulSet, 10 Gi PVC)
+    ├── jenkins namespace
+    │   └── jenkins      (LoadBalancer svc, 20 Gi PVC)
+    └── monitoring namespace
+        ├── Prometheus
+        └── Grafana      (LoadBalancer svc)
+
+Internet → AWS NLB → NGINX Ingress → /api → pc-backend
+                                   → /    → pc-frontend
+```
+
+---
+
+## RAM Estimation
+
+| Service | Reserved RAM |
+|---|---|
+| pc-frontend × 2 | 128 MB |
+| pc-backend × 2 | 512 MB |
+| pc-mongo | 1 – 2 GB |
+| Jenkins | 1 – 2 GB |
+| Prometheus + Grafana | ~1.5 GB |
+| Kubernetes overhead | ~1 GB |
+| **Total** | **~6 – 7 GB** |
+
+**Selected instance: `t3.large` (2 vCPU, 8 GB RAM) × 2 nodes = 16 GB total capacity**
+This gives comfortable headroom for rolling updates, monitoring, and Jenkins builds running in parallel.
+
+---
 
 ## Prerequisites
-1. **AWS CLI** configured (`aws configure`) with an IAM user with sufficient permissions.
-2. **eksctl** installed ([Installation Guide](https://eksctl.io/introduction/#installation)).
-3. **kubectl** installed.
-4. **Docker** installed and running.
 
----
-
-## 1. Create Amazon ECR Repositories
-
-First, you need a place to store your Docker images in AWS.
+Install these on your local machine:
 
 ```bash
-# Create a repository for the backend
-aws ecr create-repository --repository-name pc-backend --region us-east-1
+# AWS CLI
+brew install awscli
+aws configure   # enter your Access Key, Secret, region: us-east-1
 
-# Create a repository for the frontend
-aws ecr create-repository --repository-name pc-frontend --region us-east-1
-```
+# eksctl
+brew tap weaveworks/tap
+brew install weaveworks/tap/eksctl
 
-> [!NOTE]
-> Replace `us-east-1` with your preferred AWS region in all commands.
+# kubectl
+brew install kubectl
 
----
-
-## 2. Build and Push Docker Images
-
-Authenticate Docker to your ECR registry:
-```bash
-aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin <AWS_ACCOUNT_ID>.dkr.ecr.us-east-1.amazonaws.com
-```
-
-### Build and Push Backend
-```bash
-cd backend
-docker build -t pc-backend .
-docker tag pc-backend:latest <AWS_ACCOUNT_ID>.dkr.ecr.us-east-1.amazonaws.com/pc-backend:latest
-docker push <AWS_ACCOUNT_ID>.dkr.ecr.us-east-1.amazonaws.com/pc-backend:latest
-cd ..
-```
-
-### Build and Push Frontend
-```bash
-cd frontend
-docker build -t pc-frontend .
-docker tag pc-frontend:latest <AWS_ACCOUNT_ID>.dkr.ecr.us-east-1.amazonaws.com/pc-frontend:latest
-docker push <AWS_ACCOUNT_ID>.dkr.ecr.us-east-1.amazonaws.com/pc-frontend:latest
-cd ..
+# Helm
+brew install helm
 ```
 
 ---
 
-## 3. Create the EKS Cluster
+## Step 1 — Run the Cluster Setup Script
 
-We will use `eksctl` to easily provision a cluster. This process takes 15-20 minutes.
+This script provisions everything in the right order. It is safe to re-run (all steps are idempotent).
 
 ```bash
-eksctl create cluster \
-  --name product-catalog-cluster \
-  --region us-east-1 \
-  --nodegroup-name standard-workers \
-  --node-type t3.medium \
-  --nodes 2 \
-  --nodes-min 1 \
-  --nodes-max 3
+chmod +x k8s/cluster-setup.sh
+./k8s/cluster-setup.sh
 ```
+
+This will:
+1. Create ECR repositories (`pc-backend`, `pc-frontend`)
+2. Create the EKS cluster with 2 × `t3.large` nodes
+3. Install NGINX Ingress Controller
+4. Create the ECR image-pull secret
+5. Install Prometheus + Grafana (monitoring namespace)
+6. Apply all Kubernetes manifests
 
 > [!WARNING]
-> EKS clusters and EC2 nodes cost money. Be sure to tear down the cluster when you are finished!
+> This script takes **15–25 minutes** to complete (EKS cluster creation). Do not interrupt it.
 
 ---
 
-## 4. Deploy to Kubernetes
-
-Before deploying, **edit the `k8s/backend.yaml` and `k8s/frontend.yaml` files**.
-Find the `image:` fields and replace `<AWS_ACCOUNT_ID>` and `<REGION>` with your actual values so Kubernetes can pull your newly pushed images.
-
-Apply the configurations:
+## Step 2 — Deploy Jenkins
 
 ```bash
-# Apply secrets and config
-kubectl apply -f k8s/config.yaml
-
-# Apply the database
-kubectl apply -f k8s/mongo.yaml
-
-# Apply backend and frontend
-kubectl apply -f k8s/backend.yaml
-kubectl apply -f k8s/frontend.yaml
+kubectl apply -f k8s/jenkins.yaml
 ```
 
-Check the status of your pods:
+Get the Jenkins public URL:
 ```bash
+kubectl get svc jenkins -n jenkins
+# Look for EXTERNAL-IP — takes ~2 min to provision
+```
+
+Access Jenkins at `http://<EXTERNAL-IP>:8080`
+
+Get the initial admin password:
+```bash
+kubectl exec -n jenkins \
+  $(kubectl get pod -n jenkins -l app=jenkins -o jsonpath='{.items[0].metadata.name}') \
+  -- cat /var/jenkins_home/secrets/initialAdminPassword
+```
+
+Follow the setup wizard, then follow **JENKINS_GITHUB_WEBHOOK.md** to connect it to GitHub.
+
+---
+
+## Step 3 — Configure config.yaml After First Deploy
+
+After your first deployment the frontend will have a public DNS. Update `k8s/config.yaml`:
+
+```yaml
+data:
+  CLIENT_URL: "http://<ingress-dns-from-kubectl-get-ingress>"
+```
+
+Then re-apply and restart the backend:
+```bash
+kubectl apply -f k8s/config.yaml
+kubectl rollout restart deployment/pc-backend
+```
+
+---
+
+## Step 4 — Verify Everything is Running
+
+```bash
+# All app pods should be Running
 kubectl get pods
+
+# Jenkins pod
+kubectl get pods -n jenkins
+
+# Get your app's public URL
+kubectl get ingress pc-ingress
+
+# Get Grafana public URL
+kubectl get svc -n monitoring prometheus-grafana
 ```
 
 ---
 
-## 5. Access the Application
+## Day-to-Day Workflow (After Setup)
 
-The frontend is exposed via an AWS Classic Load Balancer. Get the URL:
+Once set up, your entire workflow is:
 
 ```bash
-kubectl get service pc-frontend
-```
-
-Look for the `EXTERNAL-IP`. It will look something like `a1b2c3d4...us-east-1.elb.amazonaws.com`.
-
-**Important Update:**
-Copy that `EXTERNAL-IP`, and update the `k8s/config.yaml` file so the `CLIENT_URL` matches this URL (with `http://`). Then re-apply the config:
-```bash
-kubectl apply -f k8s/config.yaml
-```
-You may need to restart the backend pods so they pick up the new environment variable:
-```bash
-kubectl rollout restart deployment pc-backend
+git add .
+git commit -m "feat: my change"
+git push origin aws-deployment
+# → GitHub webhook fires → Jenkins builds → EKS rolling update → done
 ```
 
 ---
 
-## 6. Teardown (Important to avoid charges)
-
-When you are finished with your project, delete the cluster and load balancers:
+## Teardown (Avoid Ongoing Charges)
 
 ```bash
+# Delete the EKS cluster and all node groups (takes ~10 min)
 eksctl delete cluster --name product-catalog-cluster --region us-east-1
+
+# Optionally delete ECR images (they have a small storage cost)
+aws ecr delete-repository --repository-name pc-backend  --region us-east-1 --force
+aws ecr delete-repository --repository-name pc-frontend --region us-east-1 --force
 ```

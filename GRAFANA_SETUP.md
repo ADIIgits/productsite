@@ -1,72 +1,98 @@
 # Monitoring Setup (Prometheus & Grafana)
 
-This guide walks you through setting up monitoring on your Kubernetes cluster using the `kube-prometheus-stack` Helm chart.
-
-## Prerequisites
-1. An active Kubernetes cluster (e.g., the EKS cluster from the AWS guide).
-2. [Helm](https://helm.sh/docs/intro/install/) installed on your machine.
+Prometheus and Grafana are installed automatically by the `k8s/cluster-setup.sh` script using the `kube-prometheus-stack` Helm chart. This guide explains how to access and use them.
 
 ---
 
-## 1. Install kube-prometheus-stack
+## What Gets Installed
 
-Add the Prometheus community Helm repository:
-```bash
-helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
-helm repo update
+The `kube-prometheus-stack` Helm chart installs the full monitoring stack in the `monitoring` namespace:
+
+| Component | Purpose |
+|---|---|
+| **Prometheus** | Scrapes and stores metrics from all pods |
+| **Grafana** | Dashboards and visualisations |
+| **Node Exporter** | CPU, RAM, disk metrics per EKS node |
+| **Kube State Metrics** | Kubernetes object metrics (pods, deployments, etc.) |
+| **Alertmanager** | Alerting rules and routing |
+
+The `pc-backend` pods expose metrics at `/metrics` and are auto-discovered by Prometheus via these annotations in `k8s/backend.yaml`:
+```yaml
+prometheus.io/scrape: "true"
+prometheus.io/port: "5000"
+prometheus.io/path: "/metrics"
 ```
-
-Install the stack into a new namespace called `monitoring`:
-```bash
-helm install prometheus prometheus-community/kube-prometheus-stack --namespace monitoring --create-namespace
-```
-
-This chart installs:
-- Prometheus (for scraping and storing metrics)
-- Grafana (for visualizing metrics)
-- Node Exporter (for cluster hardware metrics)
-- Kube State Metrics (for Kubernetes object metrics)
-- Prometheus Operator
-
-> [!NOTE]
-> Since we added the `prometheus.io/scrape: "true"` annotation to the `pc-backend` pod template in `k8s/backend.yaml`, Prometheus will automatically discover the `/metrics` endpoint and begin scraping your Express API.
 
 ---
 
-## 2. Access Grafana
+## Access Grafana
 
-By default, Grafana is not exposed to the public internet for security. We will use port-forwarding to access it locally.
+The cluster-setup script exposes Grafana via a **LoadBalancer** service. Get the URL:
 
 ```bash
-# Forward local port 8080 to Grafana's port 80
-kubectl port-forward svc/prometheus-grafana 8080:80 -n monitoring
+kubectl get svc prometheus-grafana -n monitoring
+# Copy the EXTERNAL-IP (takes ~2 min to appear)
 ```
 
-Open your browser and navigate to: `http://localhost:8080`
+Open `http://<EXTERNAL-IP>` in your browser.
 
 **Login Credentials:**
 - **Username:** `admin`
-- **Password:** `prom-operator`
+- **Password:** `ProductCatalog@2024`
+
+> [!IMPORTANT]
+> Change the Grafana admin password after first login: **Profile → Change Password**
 
 ---
 
-## 3. Visualize Node.js Metrics
+## Import Pre-Built Dashboards
 
-Your backend is using `express-prom-bundle`, which outputs standard Node.js metrics. We can import a community dashboard to visualize them.
+### 1. Node.js API Metrics (your backend)
 
-1. In the Grafana sidebar, go to **Dashboards** -> **Import**.
-2. Enter the Dashboard ID `11159` (this is a popular Node.js application dashboard).
-3. Click **Load**.
-4. Select `Prometheus` as the data source at the bottom.
-5. Click **Import**.
+1. Sidebar → **Dashboards** → **Import**
+2. Enter Dashboard ID: **`11159`**
+3. Click **Load** → select `Prometheus` as the data source → **Import**
 
-You should now see graphs for API Request Rates, Response Times, Memory Usage, and CPU Usage for your `pc-backend` pods!
+You'll see: Request Rate, Response Times, Memory Usage, CPU, Active Connections.
+
+### 2. Kubernetes Cluster Overview
+
+1. Import Dashboard ID: **`315`**
+2. Select `Prometheus` → **Import**
+
+Shows CPU/RAM usage per node and namespace.
+
+### 3. MongoDB Metrics (if you add mongo-exporter later)
+
+1. Import Dashboard ID: **`7353`**
 
 ---
 
-## 4. Teardown Monitoring
+## Key Metrics to Watch
 
-If you need to remove the monitoring stack to free up cluster resources:
+| Metric | What It Tells You |
+|---|---|
+| `http_requests_total` | Total API requests by route and status code |
+| `http_request_duration_seconds` | API latency (P50, P95, P99) |
+| `process_resident_memory_bytes` | Backend memory usage |
+| `nodejs_eventloop_lag_seconds` | Event loop health |
+| `kube_pod_container_status_restarts_total` | Pod crash loops |
+| `node_memory_MemAvailable_bytes` | Free RAM on each EC2 node |
+
+---
+
+## Set Up an Alert (Example: High Error Rate)
+
+1. Sidebar → **Alerting** → **Alert Rules** → **New Alert Rule**
+2. Query: `rate(http_requests_total{status=~"5.."}[5m]) > 0.1`
+3. Set condition: fires when value is above `0.1` for 5 minutes
+4. Save and optionally connect a **Contact Point** (email/Slack) via **Alerting → Contact Points**
+
+---
+
+## Teardown Monitoring
+
+To remove the monitoring stack (frees ~1.5 GB RAM on the cluster):
 
 ```bash
 helm uninstall prometheus -n monitoring

@@ -1,0 +1,44 @@
+# ── NGINX Ingress — routes all external traffic ───────────────────────────────
+# This replaces the LoadBalancer service on the frontend.
+# One single AWS NLB is created by the ingress-nginx controller.
+# All routing rules live here.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: pc-ingress
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: "20m"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "60"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "60"
+    # CORS — allow frontend to reach backend via the same domain path
+    nginx.ingress.kubernetes.io/enable-cors: "true"
+    nginx.ingress.kubernetes.io/cors-allow-origin: "*"
+spec:
+  ingressClassName: nginx
+  rules:
+  - http:
+      paths:
+      # ── API (backend) ────────────────────────────────────────────────────────
+      - path: /api
+        pathType: Prefix
+        backend:
+          service:
+            name: pc-backend
+            port:
+              number: 5000
+      # ── Metrics (Prometheus scrape endpoint) ─────────────────────────────────
+      - path: /metrics
+        pathType: Exact
+        backend:
+          service:
+            name: pc-backend
+            port:
+              number: 5000
+      # ── Frontend (catch-all) ─────────────────────────────────────────────────
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: pc-frontend
+            port:
+              number: 80

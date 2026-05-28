@@ -1,3 +1,4 @@
+# ── MongoDB StatefulSet ───────────────────────────────────────────────────────
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
@@ -20,6 +21,31 @@ spec:
         image: mongo:7
         ports:
         - containerPort: 27017
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "500m"
+          limits:
+            memory: "2Gi"
+            cpu: "1000m"
+        livenessProbe:
+          exec:
+            command:
+            - mongosh
+            - --eval
+            - "db.adminCommand('ping')"
+          initialDelaySeconds: 30
+          periodSeconds: 20
+          failureThreshold: 3
+        readinessProbe:
+          exec:
+            command:
+            - mongosh
+            - --eval
+            - "db.adminCommand('ping')"
+          initialDelaySeconds: 15
+          periodSeconds: 10
+          failureThreshold: 3
         volumeMounts:
         - name: mongo-data
           mountPath: /data/db
@@ -30,8 +56,9 @@ spec:
       accessModes: [ "ReadWriteOnce" ]
       resources:
         requests:
-          storage: 5Gi
+          storage: 10Gi
 ---
+# ── MongoDB Headless Service ──────────────────────────────────────────────────
 apiVersion: v1
 kind: Service
 metadata:
