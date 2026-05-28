@@ -2,11 +2,11 @@ FROM node:20-alpine
 
 WORKDIR /app
 
-# Install dependencies
+#Installdependencies
 COPY package*.json ./
 RUN npm install --omit=dev
 
-# Copy source
+#Copysource
 COPY . .
 
 EXPOSE 5000

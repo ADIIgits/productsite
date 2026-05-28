@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pc-config
+data:
+  # This needs to be the URL of the frontend LoadBalancer after deployment
+  # e.g., http://<your-load-balancer-dns>
+  CLIENT_URL: "http://localhost:3000"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: pc-secrets
+type: Opaque
+stringData:
+  # In a real environment, do not commit your secrets to git!
+  JWT_SECRET: "your_super_secret_jwt_key"

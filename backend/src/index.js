@@ -5,10 +5,23 @@ const mongoose = require('mongoose');
 
 const authRoutes = require('./routes/auth');
 const productRoutes = require('./routes/products');
+const promBundle = require('express-prom-bundle');
 
 const app = express();
 
+// ─── Metrics ──────────────────────────────────────────────────────────────────
+const metricsMiddleware = promBundle({
+  includeMethod: true,
+  includePath: true,
+  includeStatusCode: true,
+  includeUp: true,
+  promClient: {
+    collectDefaultMetrics: {}
+  }
+});
+
 // ─── Middleware ───────────────────────────────────────────────────────────────
+app.use(metricsMiddleware);
 app.use(
   cors({
     origin: [

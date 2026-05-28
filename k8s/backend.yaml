@@ -1,0 +1,58 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pc-backend
+  labels:
+    app: pc-backend
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: pc-backend
+  template:
+    metadata:
+      labels:
+        app: pc-backend
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "5000"
+        prometheus.io/path: "/metrics"
+    spec:
+      imagePullSecrets:
+      - name: ecr-registry-secret
+      containers:
+      - name: backend
+        # Note: Replace <AWS_ACCOUNT_ID> and <REGION> with your actual ECR repository details.
+        image: 262046948996.dkr.ecr.us-east-1.amazonaws.com/pc-backend:latest
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 5000
+        env:
+        - name: PORT
+          value: "5000"
+        - name: MONGO_URI
+          value: "mongodb://pc-mongo-0.pc-mongo:27017/productcatalog"
+        - name: JWT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: pc-secrets
+              key: JWT_SECRET
+        - name: CLIENT_URL
+          valueFrom:
+            configMapKeyRef:
+              name: pc-config
+              key: CLIENT_URL
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: pc-backend
+  labels:
+    app: pc-backend
+spec:
+  type: ClusterIP
+  ports:
+  - port: 5000
+    targetPort: 5000
+  selector:
+    app: pc-backend

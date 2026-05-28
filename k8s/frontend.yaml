@@ -1,0 +1,39 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pc-frontend
+  labels:
+    app: pc-frontend
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: pc-frontend
+  template:
+    metadata:
+      labels:
+        app: pc-frontend
+    spec:
+      imagePullSecrets:
+      - name: ecr-registry-secret
+      containers:
+      - name: frontend
+        # Note: Replace <AWS_ACCOUNT_ID> and <REGION> with your actual ECR repository details.
+        image: 262046948996.dkr.ecr.us-east-1.amazonaws.com/pc-frontend:latest
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 80
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: pc-frontend
+  labels:
+    app: pc-frontend
+spec:
+  type: LoadBalancer
+  ports:
+  - port: 80
+    targetPort: 80
+  selector:
+    app: pc-frontend
